@@ -1,58 +1,81 @@
 import React, { useEffect } from "react"
 import Sidebar from "./components/Sidebar"
 import Editor from "./components/Editor"
-import { data } from "./data"
 import Split from "react-split"
 import { nanoid } from "nanoid"
+import { onSnapshot, addDoc, doc, deleteDoc } from "firebase/firestore" //onSnapshot listner watches over a db like a eagle, it executes the same operations on our local code that were performed on the database by the user. It helps to maintain a single source of truth. 
+import { notesCollection, db } from "./firebase"
 
 export default function App() {
-
-     /**
-     * Challenge:
-     * 1. Every time the `notes` array changes, save it 
-     *    in localStorage. You'll need to use JSON.stringify()
-     *    to turn the array into a string to save in localStorage.
-     * 2. When the app first loads, initialize the notes state
-     *    with the notes saved in localStorage. You'll need to
-     *    use JSON.parse() to turn the stringified array back
-     *    into a real JS array.
-     */
-    
     //initialised state for notes 
-    const [notes, setNotes] = React.useState(JSON.parse(localStorage.getItem("notes")) || [])
-    //initialised state for current note id
-    const [currentNoteId, setCurrentNoteId] = React.useState(
-        (notes[0] && notes[0].id) || ""
-    )
-
+    //lazily initialised state so that it does not run on every render
+    const [notes, setNotes] = React.useState([])
+    
+    //useEffect to mount onSnapshot listner  
     useEffect(() => {
-        localStorage.setItem("notes", JSON.stringify(notes))
-    }, [notes])
+        const unsubscribe = onSnapshot(notesCollection, function (snapshot){
+            //sync our database with our local code
+            const notesArray = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                id: doc.id 
+            }))
+            setNotes(notesArray)
+        })
+
+        return unsubscribe
+    }, [])
+
+    //initialised state for setting up the current note id
+    const [currentNoteId, setCurrentNoteId] = React.useState("")
+
+    const currentNote = notes.find(note => note.id === currentNoteId) || notes[0]
 
     //function to create a new note
-    function createNewNote() {
+    async function createNewNote() {
         const newNote = {
-            id: nanoid(),
             body: "# Type your markdown note's title here"
         }
-        setNotes(prevNotes => [newNote, ...prevNotes])
-        setCurrentNoteId(newNote.id)
+        const newNoteRef = await addDoc(notesCollection, newNote)
+        setCurrentNoteId(newNoteRef.id)
     }
     
+    //initializing a useEffect for setting up the currentNoteId 
+    useEffect(() => {
+        if(!currentNoteId) {
+            setCurrentNoteId(notes[0].id)
+        }
+    }, 
+    [notes])
+
+    //function to delete a note
+    async function deleteNote(noteId) {
+        //get the reference of the document which needs to be deleted 
+      const docRef = doc(db, "notes", noteId )
+       //delete the document using deleteDoc function
+      await deleteDoc(docRef)
+    }
+
     //function to update the note
     function updateNote(text) {
-        setNotes(oldNotes => oldNotes.map(oldNote => {
-            return oldNote.id === currentNoteId
-                ? { ...oldNote, body: text }
-                : oldNote
-        }))
-    }
-    
-    //function to find the current note
-    function findCurrentNote() {
-        return notes.find(note => {
-            return note.id === currentNoteId
-        }) || notes[0]
+        //initialising a new array
+        const newArray = [];
+        //calling setnotes to change the notes array state
+        setNotes(oldNotes => {
+            //looping over the existing array
+            for(let note of oldNotes){
+                //condition to fing the current note being edited
+                if(note.id === currentNoteId){
+                    //pushing the current note at the top of the array
+                    newArray.unshift({...note, body: text})
+                }
+                else {
+                    //otherwise pushing it at the bottom of the array
+                    newArray.push(note)
+                }
+            }
+
+        return newArray
+        })
     }
     
     return (
@@ -67,18 +90,17 @@ export default function App() {
             >
                 <Sidebar
                     notes={notes}
-                    currentNote={findCurrentNote()}
+                    currentNote={currentNote}
                     setCurrentNoteId={setCurrentNoteId}
                     newNote={createNewNote}
+                    deleteNote={deleteNote}
                 />
-                {
-                    currentNoteId && 
-                    notes.length > 0 &&
-                    <Editor 
-                        currentNote={findCurrentNote()} 
-                        updateNote={updateNote} 
-                    />
-                }
+                    
+                <Editor 
+                    currentNote={currentNote} 
+                    updateNote={updateNote} 
+                />
+                
             </Split>
             :
             <div className="no-notes">
