@@ -1,15 +1,29 @@
-import React, { useEffect } from "react"
+import React, { useEffect, useState } from "react"
 import Sidebar from "./components/Sidebar"
 import Editor from "./components/Editor"
 import Split from "react-split"
-import { nanoid } from "nanoid"
-import { onSnapshot, addDoc, doc, deleteDoc } from "firebase/firestore" //onSnapshot listner watches over a db like a eagle, it executes the same operations on our local code that were performed on the database by the user. It helps to maintain a single source of truth. 
+import { 
+        onSnapshot, 
+        addDoc, 
+        doc, 
+        deleteDoc,
+        setDoc 
+       } from "firebase/firestore" //onSnapshot listner watches over a db like a eagle, it executes the same operations on our local code that were performed on the database by the user. It helps to maintain a single source of truth. 
 import { notesCollection, db } from "./firebase"
 
 export default function App() {
+    
     //initialised state for notes 
-    //lazily initialised state so that it does not run on every render
     const [notes, setNotes] = React.useState([])
+    
+    //initialised state for setting up the current note id
+    const [currentNoteId, setCurrentNoteId] = React.useState("")
+    const [tempNoteText, setTempNoteText] = useState("")
+    const currentNote = 
+        notes.find(note => note.id === currentNoteId) || 
+        (notes.length > 0 ? notes[0] : null)
+
+    console.log(currentNote)
     
     //useEffect to mount onSnapshot listner  
     useEffect(() => {
@@ -25,28 +39,47 @@ export default function App() {
         return unsubscribe
     }, [])
 
-    //initialised state for setting up the current note id
-    const [currentNoteId, setCurrentNoteId] = React.useState("")
+    useEffect(() => {
+        if(!currentNoteId) return
 
-    const currentNote = notes.find(note => note.id === currentNoteId) || notes[0]
+        const timeoutId = setTimeout(() => {
+            if(tempNoteText !== currentNote.body) {
+                updateNote(tempNoteText)
+            }
+        }, 500)
+
+        return () => clearTimeout(timeoutId)
+    }, [tempNoteText])
+
+    //useEffect to set the tempNoteText to the currentNote's body
+    useEffect(() => {
+        if(currentNote) {
+            setTempNoteText(currentNote.body)
+        }else{
+            setTempNoteText("# Type your markdown note's title here")
+        }
+    }, [currentNote])
 
     //function to create a new note
     async function createNewNote() {
         const newNote = {
-            body: "# Type your markdown note's title here"
+            body: tempNoteText,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
         }
         const newNoteRef = await addDoc(notesCollection, newNote)
         setCurrentNoteId(newNoteRef.id)
+        console.log(newNote.createdAt)
     }
-    
+
     //initializing a useEffect for setting up the currentNoteId 
     useEffect(() => {
-        if(!currentNoteId) {
+        if(!currentNoteId && notes.length > 0) {
             setCurrentNoteId(notes[0].id)
-        }
-    }, 
-    [notes])
+        } 
+    }, [notes])
 
+    console.log(currentNoteId)   
     //function to delete a note
     async function deleteNote(noteId) {
         //get the reference of the document which needs to be deleted 
@@ -56,28 +89,24 @@ export default function App() {
     }
 
     //function to update the note
-    function updateNote(text) {
-        //initialising a new array
-        const newArray = [];
-        //calling setnotes to change the notes array state
-        setNotes(oldNotes => {
-            //looping over the existing array
-            for(let note of oldNotes){
-                //condition to fing the current note being edited
-                if(note.id === currentNoteId){
-                    //pushing the current note at the top of the array
-                    newArray.unshift({...note, body: text})
-                }
-                else {
-                    //otherwise pushing it at the bottom of the array
-                    newArray.push(note)
-                }
-            }
-
-        return newArray
-        })
+    async function updateNote(tempNoteText) {
+       try{
+        //capturing the reference of the document which needs to be updated
+        const docRef = doc(db, "notes", currentNoteId)
+        //updating the document in the firestore, merging the body property 
+        await setDoc(docRef, 
+                    { body: tempNoteText, 
+                      updatedAt: Date.now()}, 
+                    { merge: true }
+                    )
+       } catch(error) {
+        console.log("Failed to update the note", error)
+       }
     }
     
+    //sorting the notes based on the updatedAt property
+    const sortedNotes = notes.sort((a,b) => b.updatedAt - a.updatedAt)
+
     return (
         <main>
         {
@@ -89,7 +118,7 @@ export default function App() {
                 className="split"
             >
                 <Sidebar
-                    notes={notes}
+                    notes={sortedNotes}
                     currentNote={currentNote}
                     setCurrentNoteId={setCurrentNoteId}
                     newNote={createNewNote}
@@ -97,7 +126,8 @@ export default function App() {
                 />
                     
                 <Editor 
-                    currentNote={currentNote} 
+                    tempNoteText={tempNoteText}
+                    setTempNoteText={setTempNoteText}
                     updateNote={updateNote} 
                 />
                 
